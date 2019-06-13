@@ -1,5 +1,5 @@
 /*
- *  HomeAssistant-MQTT 1.1 (Arduino with Ethernet)
+ *  HomeAssistant-MQTT 1.0 (esp32)
  *
  *  Processes the security system status and allows for control using Home Assistant via MQTT.
  *
@@ -7,14 +7,14 @@
  *  Mosquitto MQTT broker: https://mosquitto.org
  *
  *  Usage:
- *    1. Set the security system access code to permit disarming through Home Assistant.
- *    2. Set the MQTT server address in the sketch.
- *    3. Copy the example configuration to Home Assistant's configuration.yaml and customize.
- *    4. Upload the sketch.
- *    5. Restart Home Assistant.
+ *    1. Set the WiFi SSID and password in the sketch.
+ *    2. Set the security system access code to permit disarming through Home Assistant.
+ *    3. Set the MQTT server address in the sketch.
+ *    4. Copy the example configuration to Home Assistant's configuration.yaml and customize.
+ *    5. Upload the sketch.
+ *    6. Restart Home Assistant.
  *
- *  Release notes
- *    1.1 - Added status update on initial MQTT connection and reconnection
+ *  Release notes:
  *    1.0 - Initial release
  *
  *  Example Home Assistant configuration.yaml:
@@ -110,21 +110,21 @@ binary_sensor:
  *    Fire alarm restored: "0"
  *
  *  Wiring:
- *      DSC Aux(+) --- Arduino Vin pin
+ *      DSC Aux(+) --- 5v voltage regulator --- esp32 dev board 5v pin
  *
- *      DSC Aux(-) --- Arduino Ground
+ *      DSC Aux(-) --- esp32 Ground
  *
- *                                         +--- dscClockPin (Arduino Uno: 2,3)
- *      DSC Yellow --- 15k ohm resistor ---|
+ *                                         +--- dscClockPin (esp32: 4,13,16-39)
+ *      DSC Yellow --- 33k ohm resistor ---|
  *                                         +--- 10k ohm resistor --- Ground
  *
- *                                         +--- dscReadPin (Arduino Uno: 2-12)
- *      DSC Green ---- 15k ohm resistor ---|
+ *                                         +--- dscReadPin (esp32: 4,13,16-39)
+ *      DSC Green ---- 33k ohm resistor ---|
  *                                         +--- 10k ohm resistor --- Ground
  *
  *  Virtual keypad (optional):
  *      DSC Green ---- NPN collector --\
- *                                      |-- NPN base --- 1k ohm resistor --- dscWritePin (Arduino Uno: 2-12)
+ *                                      |-- NPN base --- 1k ohm resistor --- dscWritePin (esp32: 4,13,16-33)
  *            Ground --- NPN emitter --/
  *
  *  Virtual keypad uses an NPN transistor to pull the data line low - most small signal NPN transistors should
@@ -138,14 +138,14 @@ binary_sensor:
  *  This example code is in the public domain.
  */
 
-#include <SPI.h>
-#include <Ethernet.h>
+#include <WiFi.h>
 #include <PubSubClient.h>
 #include <dscKeybusInterface.h>
 
 // Settings
-byte mac[] = { 0xAA, 0x61, 0x0A, 0x00, 0x00, 0x01 };  // Set a MAC address unique to the local network
-const char* accessCode = "";    // An access code is required to disarm/night arm and may be required to arm based on panel configuration.
+const char* wifiSSID = "";
+const char* wifiPassword = "";
+const char* accessCode = "";  // An access code is required to disarm/night arm and may be required to arm based on panel configuration.
 const char* mqttServer = "";    // MQTT server domain name or IP address
 const int mqttPort = 1883;      // MQTT server port
 const char* mqttUsername = "";  // Optional, leave blank if not required
@@ -163,14 +163,14 @@ const char* mqttLwtMessage = "offline";
 const char* mqttSubscribeTopic = "dsc/Set";            // Receives messages to write to the panel
 unsigned long mqttPreviousTime;
 
-EthernetClient ethClient;
-PubSubClient mqtt(mqttServer, mqttPort, ethClient);
+WiFiClient wifiClient;
+PubSubClient mqtt(mqttServer, mqttPort, wifiClient);
 
 // Configures the Keybus interface with the specified pins - dscWritePin is optional, leaving it out disables the
 // virtual keypad.
-#define dscClockPin 3  // Arduino Uno hardware interrupt pin: 2,3
-#define dscReadPin 5   // Arduino Uno: 2-12
-#define dscWritePin 6  // Arduino Uno: 2-12
+#define dscClockPin 18  // esp32: 4,13,16-39
+#define dscReadPin 19   // esp32: 4,13,16-39
+#define dscWritePin 21  // esp32: 4,13,16-33
 dscKeybusInterface dsc(dscClockPin, dscReadPin, dscWritePin);
 
 
@@ -179,15 +179,11 @@ void setup() {
   Serial.println();
   Serial.println();
 
-  // Initializes ethernet with DHCP
-  Serial.print(F("Initializing Ethernet..."));
-  while(!Ethernet.begin(mac)) {
-      Serial.println(F("DHCP failed.  Retrying..."));
-      delay(5000);
-  }
-  Serial.println(F("success!"));
-  Serial.print(F("IP address: "));
-  Serial.println(Ethernet.localIP());
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(wifiSSID, wifiPassword);
+  while (WiFi.status() != WL_CONNECTED) delay(500);
+  Serial.print("WiFi connected: ");
+  Serial.println(WiFi.localIP());
 
   mqtt.setCallback(mqttCallback);
   if (mqttConnect()) mqttPreviousTime = millis();
@@ -212,8 +208,15 @@ void loop() {
     if (dsc.bufferOverflow) Serial.println(F("Keybus buffer overflow"));
     dsc.bufferOverflow = false;
 
+    // Checks if the interface is connected to the Keybus
+    if (dsc.keybusChanged) {
+      dsc.keybusChanged = false;  // Resets the Keybus data status flag
+      if (dsc.keybusConnected) mqtt.publish(mqttStatusTopic, mqttBirthMessage, true);
+      else mqtt.publish(mqttStatusTopic, mqttLwtMessage, true);
+    }
+
     // Sends the access code when needed by the panel for arming
-    if (dsc.accessCodePrompt && dsc.writeReady) {
+    if (dsc.accessCodePrompt) {
       dsc.accessCodePrompt = false;
       dsc.write(accessCode);
     }
@@ -344,21 +347,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   // Arm stay
   if (payload[payloadIndex] == 'S' && !dsc.armed[partition] && !dsc.exitDelay[partition]) {
-    while (!dsc.writeReady) dsc.handlePanel();  // Continues processing Keybus data until ready to write
     dsc.writePartition = partition + 1;         // Sets writes to the partition number
     dsc.write('s');                             // Virtual keypad arm stay
   }
 
   // Arm away
   else if (payload[payloadIndex] == 'A' && !dsc.armed[partition] && !dsc.exitDelay[partition]) {
-    while (!dsc.writeReady) dsc.handlePanel();  // Continues processing Keybus data until ready to write
     dsc.writePartition = partition + 1;         // Sets writes to the partition number
     dsc.write('w');                             // Virtual keypad arm away
   }
 
   // Disarm
   else if (payload[payloadIndex] == 'D' && (dsc.armed[partition] || dsc.exitDelay[partition])) {
-    while (!dsc.writeReady) dsc.handlePanel();  // Continues processing Keybus data until ready to write
     dsc.writePartition = partition + 1;         // Sets writes to the partition number
     dsc.write(accessCode);
   }
@@ -371,9 +371,9 @@ void mqttHandle() {
     if (mqttCurrentTime - mqttPreviousTime > 5000) {
       mqttPreviousTime = mqttCurrentTime;
       if (mqttConnect()) {
+        if (dsc.keybusConnected) mqtt.publish(mqttStatusTopic, mqttBirthMessage, true);
         Serial.println(F("MQTT disconnected, successfully reconnected."));
         mqttPreviousTime = 0;
-        dsc.getStatus();  // Resets the state of all status components as changed to get the current status
       }
       else Serial.println(F("MQTT disconnected, failed to reconnect."));
     }
