@@ -55,8 +55,8 @@ Poking around with a logic analyzer and oscilloscope revealed that the errors ca
   - Non-blocking code: Allows sketches to run as quickly as possible without using `delay` or `delayMicroseconds`
 * Supported security systems:
   - [DSC PowerSeries](https://www.dsc.com/?n=enduser&o=identify)
-  - Verified panels: PC585, PC1555MX, PC1565, PC5005, PC5010, PC5015, PC1616, PC1808, PC1832, PC1864.
-  - All PowerSeries series are supported, please [post an issue](https://github.com/taligentx/dscKeybusInterface/issues) if you have a different panel (PC5020, etc) and have tested the interface to update this list.
+  - Verified panels: PC585, PC1555MX, PC1565, PC5005, PC5010, PC5015, PC5020, PC1616, PC1808, PC1832, PC1864.
+  - All PowerSeries series are supported, please [post an issue](https://github.com/taligentx/dscKeybusInterface/issues) if you have a different panel and have tested the interface to update this list.
   - Rebranded DSC PowerSeries (such as some ADT systems) should also work with this interface.
 * Unsupported security systems:
   - DSC Classic series ([PC1500, PC1550, etc](https://www.dsc.com/?n=enduser&o=identify)) use a different data protocol, though support is possible.
@@ -259,10 +259,11 @@ DSC Green ---- NPN collector --\
   * That random NPN at the bottom of your parts bin (my choice)
 * Power:
   * Arduino boards can be powered directly from the DSC panel
-  * esp8266/esp32 development boards should use a 5v voltage regulator:
-    - LM2596-based step-down buck converter modules are reasonably efficient and commonly available for under $1USD shipped (eBay, Aliexpress, etc).
+  * esp8266/esp32 development boards should use an external voltage regulator set to 5v to the 5v pin:
+    - LM2596-based step-down buck converter modules are reasonably efficient and commonly available for under $1USD shipped (eBay, Aliexpress, etc) - these are the modules I use.
     - MP2307-based step-down buck converter modules (aka Mini360) are also available but some versions run hot with an efficiency nearly as poor as linear regulators.
     - Linear voltage regulators (LM7805, etc) will work but are inefficient and run hot - these may need a heatsink.
+  * esp8266/esp32 boards can also use an external voltage regulator set to 3.3v to the 3.3v pin - this bypasses the module's onboard voltage regulator.  For example, some Wemos D1 mini clones use [low current voltage regulators](https://www.letscontrolit.com/forum/viewtopic.php?t=6603) that can cause stability issues.  NodeMCU boards are not affected as they use the more powerful AMS1117 regulator.
 * Connections should be soldered, breadboards can cause issues.
 
 ## Virtual keypad
