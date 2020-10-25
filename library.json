@@ -5,9 +5,9 @@
   "repository":
   {
     "type": "git",
-    "url": "https://github.com/taligentx/dscKeybusInterface.git"
+    "url": "https://github.com/alvaromi/dscKeybusInterface.git"
   },
-  "version": "1.2.1",
+  "version": "1.2.1.1",
   "frameworks": "arduino",
   "platforms": "atmelavr, espressif8266"
 }
